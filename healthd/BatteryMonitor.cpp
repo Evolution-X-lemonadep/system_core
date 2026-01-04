@@ -47,11 +47,11 @@
 
 #define POWER_SUPPLY_SUBSYSTEM "power_supply"
 #define POWER_SUPPLY_SYSFS_PATH "/sys/class/" POWER_SUPPLY_SUBSYSTEM
-#define SYSFS_BATTERY_CURRENT "/sys/class/power_supply/battery/current_now"
-#define SYSFS_BATTERY_VOLTAGE "/sys/class/power_supply/battery/voltage_now"
 #define FAKE_BATTERY_CAPACITY 42
 #define FAKE_BATTERY_TEMPERATURE 424
 #define MILLION 1.0e6
+#define THOUSAND 1.0e3
+#define DEFAULT_VBUS_VOLTAGE 5000000
 
 using HealthInfo_1_0 = android::hardware::health::V1_0::HealthInfo;
 using HealthInfo_2_0 = android::hardware::health::V2_0::HealthInfo;
@@ -526,6 +526,7 @@ void BatteryMonitor::updateValues(void) {
         if (getIntField(path)) {
             path.clear();
             path.appendFormat("%s/%s/type", POWER_SUPPLY_SYSFS_PATH, mChargerNames[i].c_str());
+            int voltageNormalization = 1;
             switch(readPowerSupplyType(path)) {
             case ANDROID_POWER_SUPPLY_TYPE_AC:
                 mHealthInfo->chargerAcOnline = true;
@@ -535,6 +536,7 @@ void BatteryMonitor::updateValues(void) {
                 break;
             case ANDROID_POWER_SUPPLY_TYPE_WIRELESS:
                 mHealthInfo->chargerWirelessOnline = true;
+                voltageNormalization = THOUSAND;
                 break;
             case ANDROID_POWER_SUPPLY_TYPE_DOCK:
                 mHealthInfo->chargerDockOnline = true;
@@ -549,35 +551,23 @@ void BatteryMonitor::updateValues(void) {
                     KLOG_WARNING(LOG_TAG, "%s: Unknown power supply type\n",
                                  mChargerNames[i].c_str());
             }
+            path.clear();
+            path.appendFormat("%s/battery/current_now", POWER_SUPPLY_SYSFS_PATH);
+            int ChargingCurrent = (access(path.c_str(), R_OK) == 0) ? abs(getIntField(path)) : 0;
 
-            int ChargingCurrent = 0;
-            int ChargingVoltage = 0;
+            path.clear();
+            path.appendFormat("%s/%s/voltage_now", POWER_SUPPLY_SYSFS_PATH,
+                              mChargerNames[i].c_str());
+            int ChargingVoltage = (access(path.c_str(), R_OK) == 0) ? (voltageNormalization * getIntField(path)) : DEFAULT_VBUS_VOLTAGE;
 
-            // Prefer battery current_now / voltage_now
-            if (access(SYSFS_BATTERY_CURRENT, R_OK) == 0) {
-                ChargingCurrent = abs(getIntField(String8(SYSFS_BATTERY_CURRENT)));
-            } else {
-                path.clear();
-                path.appendFormat("%s/%s/current_now", POWER_SUPPLY_SYSFS_PATH,
-                                  mChargerNames[i].c_str());
-                if (access(path.c_str(), R_OK) == 0) {
-                    ChargingCurrent = abs(getIntField(path));
-                }
-            }
-
-            if (access(SYSFS_BATTERY_VOLTAGE, R_OK) == 0) {
-                ChargingVoltage = getIntField(String8(SYSFS_BATTERY_VOLTAGE));
-            } else {
-                path.clear();
-                path.appendFormat("%s/%s/voltage_now", POWER_SUPPLY_SYSFS_PATH,
-                                  mChargerNames[i].c_str());
-                if (access(path.c_str(), R_OK) == 0) {
-                    ChargingVoltage = getIntField(path);
-                }
-            }
 
             double power = ((double)ChargingCurrent / MILLION) *
                            ((double)ChargingVoltage / MILLION);
+
+            char vs[256];
+            snprintf(vs, sizeof(vs), "BatteryMonitor: c=%d v=%d p=%.2f\n", ChargingCurrent, ChargingVoltage, power);
+            KLOG_WARNING(LOG_TAG, "%s\n", vs);
+
             if (MaxPower < power) {
                 mHealthInfo->maxChargingCurrentMicroamps = ChargingCurrent;
                 mHealthInfo->maxChargingVoltageMicrovolts = ChargingVoltage;
