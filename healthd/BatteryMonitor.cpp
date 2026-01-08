@@ -50,6 +50,7 @@
 #define FAKE_BATTERY_CAPACITY 42
 #define FAKE_BATTERY_TEMPERATURE 424
 #define MILLION 1.0e6
+#define THOUSAND 1.0e3
 #define DEFAULT_VBUS_VOLTAGE 5000000
 
 using HealthInfo_1_0 = android::hardware::health::V1_0::HealthInfo;
@@ -525,6 +526,7 @@ void BatteryMonitor::updateValues(void) {
         if (getIntField(path)) {
             path.clear();
             path.appendFormat("%s/%s/type", POWER_SUPPLY_SYSFS_PATH, mChargerNames[i].c_str());
+            int voltageNormalization = 1;
             switch(readPowerSupplyType(path)) {
             case ANDROID_POWER_SUPPLY_TYPE_AC:
                 mHealthInfo->chargerAcOnline = true;
@@ -534,6 +536,7 @@ void BatteryMonitor::updateValues(void) {
                 break;
             case ANDROID_POWER_SUPPLY_TYPE_WIRELESS:
                 mHealthInfo->chargerWirelessOnline = true;
+                voltageNormalization = THOUSAND;
                 break;
             case ANDROID_POWER_SUPPLY_TYPE_DOCK:
                 mHealthInfo->chargerDockOnline = true;
@@ -549,23 +552,13 @@ void BatteryMonitor::updateValues(void) {
                                  mChargerNames[i].c_str());
             }
             path.clear();
-            path.appendFormat("%s/%s/current_max", POWER_SUPPLY_SYSFS_PATH,
-                              mChargerNames[i].c_str());
-            int ChargingCurrent = (access(path.c_str(), R_OK) == 0) ? getIntField(path) : 0;
+            path.appendFormat("%s/battery/current_now", POWER_SUPPLY_SYSFS_PATH);
+            int ChargingCurrent = (access(path.c_str(), R_OK) == 0) ? abs(getIntField(path)) : 0;
 
-            int ChargingVoltage;
             path.clear();
-            path.appendFormat("%s/%s/voltage_max", POWER_SUPPLY_SYSFS_PATH,
+            path.appendFormat("%s/%s/voltage_now", POWER_SUPPLY_SYSFS_PATH,
                               mChargerNames[i].c_str());
-            if (access(path.c_str(), R_OK) == 0) {
-                ChargingVoltage = getIntField(path);
-            } else {
-                path.clear();
-                path.appendFormat("%s/%s/voltage_max_design", POWER_SUPPLY_SYSFS_PATH,
-                                  mChargerNames[i].c_str());
-                ChargingVoltage = (access(path.c_str(), R_OK) == 0) ? getIntField(path)
-                                                                    : DEFAULT_VBUS_VOLTAGE;
-            }
+            int ChargingVoltage = (access(path.c_str(), R_OK) == 0) ? (voltageNormalization * getIntField(path)) : DEFAULT_VBUS_VOLTAGE;
 
             double power = ((double)ChargingCurrent / MILLION) *
                            ((double)ChargingVoltage / MILLION);
